@@ -1,5 +1,66 @@
 # tf-molecule-ecr-repository-aws
-ECR repository with lifecycle policy for image retention.
+
+A composed Terraform molecule that provisions an AWS ECR repository together with an
+image-retention lifecycle policy, named and tagged consistently via the tf-label
+(`null-label`) convention.
+
+## Features
+
+- **ECR repository** — created by the `tf-atom-ecr-repository-aws` atom, with
+  configurable tag mutability (`IMMUTABLE`/`MUTABLE`) and image scan-on-push.
+- **Lifecycle policy** — created by the `tf-atom-ecr-lifecycle-policy-aws` atom.
+  Ships a sensible default ("keep the last N images", `max_image_count`) or accepts a
+  fully custom policy JSON via `lifecycle_policy`.
+- **Consistent naming & tagging** — the repository name and tags are derived from the
+  tf-label context (`namespace`, `stage`, `name`, …), so it slots into a wider stack
+  by passing `context = module.this.context`.
+- **Enable/disable switch** — set `enabled = false` to create no resources (useful for
+  conditional stacks), inherited from the tf-label interface.
+
+## Usage
+
+```hcl
+module "ecr_repository" {
+  source = "git::https://github.com/PlatformStackPulse/tf-molecule-ecr-repository-aws.git?ref=v1.0.0"
+
+  # tf-label naming context
+  namespace = "eg"
+  stage     = "prod"
+  name      = "api"
+
+  # module inputs (all optional — defaults shown)
+  image_tag_mutability = "IMMUTABLE"
+  scan_on_push         = true
+  max_image_count      = 30
+}
+```
+
+Provide a fully custom retention policy instead of the default:
+
+```hcl
+module "ecr_repository" {
+  source = "git::https://github.com/PlatformStackPulse/tf-molecule-ecr-repository-aws.git?ref=v1.0.0"
+
+  namespace = "eg"
+  stage     = "prod"
+  name      = "api"
+
+  lifecycle_policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "expire untagged after 14 days"
+      selection = {
+        tagStatus   = "untagged"
+        countType   = "sinceImagePushed"
+        countUnit   = "days"
+        countNumber = 14
+      }
+      action = { type = "expire" }
+    }]
+  })
+}
+```
+
 <!-- BEGIN_TF_DOCS -->
 ### Requirements
 
@@ -59,3 +120,21 @@ No resources.
 | <a name="output_repository_name"></a> [repository\_name](#output\_repository\_name) | ECR repository name |
 | <a name="output_repository_url"></a> [repository\_url](#output\_repository\_url) | ECR repository URL |
 <!-- END_TF_DOCS -->
+
+## Tests
+
+Unit tests use the native `terraform test` framework with a mocked AWS provider, so
+no AWS credentials or real resources are needed. Assertions are made only on
+plan-known values (the tf-label id, input pass-throughs, and the `enabled` flag).
+
+```bash
+# Run the unit test suite
+terraform init -backend=false
+terraform test -test-directory=tests/unit
+
+# Or via the Makefile
+make test-unit
+```
+
+Integration tests (if present) live under `tests/integration` and require real AWS
+credentials: `make test-integration`.
